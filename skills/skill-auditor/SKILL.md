@@ -1,7 +1,7 @@
 ---
 name: skill-auditor
 description: Derives a scoring rubric from any SKILL.md file's own stated rules, builds a two-sided test set (positive and boundary/negative cases), runs isolated test rollouts, and applies one bounded, validated edit per round to fix the most severe failure -- without regressing any hard rule. Use when testing, hardening, auditing, or improving any Claude skill before publishing, sharing, or relying on it in production.
-version: 1.0.8
+version: 1.1.1
 author: Gaurav Khapekar
 license: MIT
 ---
@@ -17,6 +17,18 @@ against a rubric derived from the target skill's own text, and you never accept 
 edit that improves one thing while breaking a rule the skill author explicitly wrote.
 
 You do not become the target skill's persona. You remain the evaluator throughout.
+
+## Communication Rule (applies to every decision point, not just the final report)
+
+Any time this skill asks the person to make a decision -- the Phase 0d halt, the
+Phase 1.5 commitment gate, a stop/pause confirmation, anything -- the message must
+open with 2-3 plain-English sentences a non-technical person could understand,
+explaining **what is about to happen and why**, before any technical breakdown,
+table, or numbered list. Never lead with jargon and follow with an option list;
+always lead with the plain explanation, then the detail underneath it for anyone
+who wants it. If a recommendation is being made (e.g. "Full run"), the plain
+sentence must say why that's the recommended choice, in concrete terms -- not just
+label it "(Recommended)" without explaining the reasoning behind it.
 
 ---
 
@@ -103,33 +115,69 @@ nuanced decision).
 
 ## Phase 0d -- Applicability check (mandatory, runs before Phase 1, can halt the loop)
 
-Look at what Phase 0a/0b actually found. Ask: does this skill's core value come from
-producing a single outcome that is deterministically checkable by execution (a test
-suite passes/fails, an API call succeeds/fails, a generated query returns the
-correct rows, code compiles and runs correctly) -- with little or no dormancy, gate,
-tone, or classification-based hard rules?
+Do not decide this by counting how many hard rules or "must/never/always" statements
+the skill contains -- a skill can have extensive internal procedural rules AND still
+be a benchmark-fit skill, if those rules exist only as *means* to reliably produce a
+checkable result. Rule density is not the signal. The actual test is:
 
-If YES: state this plainly -- "This skill's correctness is a single checkable
-outcome across a task distribution, not a set of internal behavioral rules. A
-process-compliance rubric is not the right fit; a benchmark-style tool (e.g. a
-SkillOpt-style optimizer with a real verifier) would test this more meaningfully."
-**Halt here.** Do not proceed to Phase 1. Ask the user: "Continue anyway with the
-process-rubric approach as a lesser-value fallback, or stop?" Wait for an explicit
-answer before doing anything further.
+**Is there an external, checkable ground truth for whether the underlying task was
+completed correctly -- independent of and separate from the skill's own internal
+rules -- across many task variations?** Examples: a test suite passes/fails, a
+generated formula/query returns the correct value, code executes and produces the
+right output, an assertion holds true. If such a ground truth exists, this skill is
+benchmark-fit regardless of how many internal implementation rules (headless mode,
+wait conditions, help-first discipline, etc.) also govern *how* to get there --
+those are quality-of-execution rules serving an external checkable goal, not the
+goal itself.
 
-If NO (the skill is meaningfully governed by dormancy, gates, tone, format, or
-classification rules -- e.g. internal-comms, brand-guidelines, shred, forma):
-state "Applicability check: this skill is process/rule-governed, proceeding with
-the full rubric loop," and continue to Phase 1 normally, no halt.
+Only conclude "process/rule-governed, no external ground truth" when success is
+*entirely* defined by whether the skill followed its own stated behavioral rules
+(dormancy, gates, tone, classification, format) with nothing external to check the
+final result against -- e.g. shred, forma, internal-comms, grill-with-docs.
 
-If the skill has BOTH real behavioral rules AND generates real artifacts per test
-case with no deterministic ground truth to check them against (e.g. canvas-design --
+If an external checkable ground truth exists: open with a plain-English sentence
+first -- e.g. "This skill's real job is producing something that's either right or
+wrong in a way a computer can check automatically -- like a test that passes or
+fails. Testing whether it 'follows its own rules' would miss that entirely, so a
+different kind of tool fits better here." Then add the technical detail: "This
+skill's underlying task has an external, checkable ground truth (e.g. does the
+generated script's execution pass or fail), separate from its internal process
+rules. A process-compliance rubric would test the rules but miss the thing that
+actually matters -- whether the task gets done correctly. A benchmark-style tool
+with a real verifier fits better." **Halt here.** Do not proceed to Phase 1. Ask
+the user plainly: "Do you want me to test it anyway in a more limited way (it'll
+check the rules, not whether the end result is actually correct), or stop here?"
+Wait for an explicit answer before doing anything further.
+
+**Always follow the halt with a concrete next-step suggestion, not just a
+refusal.** Describe the *kind* of tool that fits, in plain English, before naming
+anything specific: "What you'd actually want is a tool that runs this skill
+against many different real test scenarios and automatically checks whether each
+one produced the correct result -- pass or fail, checked by a computer, not by
+reading the output and guessing. As of today, the closest real example of that
+kind of tool is a Microsoft Research project called SkillOpt (github.com/microsoft/SkillOpt),
+which does exactly this: run many attempts, check results against a real verifier,
+edit the skill, validate the edit didn't make things worse, repeat. Treat this as
+a pointer to what exists right now, not a permanent recommendation -- better or
+newer tools built specifically for this purpose may exist by the time you read
+this, so it's worth a quick search for 'agent skill benchmark optimizer' before
+committing to any specific one." Never present this as the only path forward --
+frame it as one working example of the right category of tool.
+
+If no external ground truth exists (purely rule-governed, e.g. internal-comms,
+brand-guidelines, shred, forma): state "Applicability check: this skill is
+process/rule-governed with no external ground truth to check against, proceeding
+with the full rubric loop," and continue to Phase 1 normally, no halt.
+
+If the skill has real behavioral rules AND generates real artifacts per test case
+with no deterministic ground truth to check them against (e.g. canvas-design --
 produces images, but there's no "correct" piece of art to verify against): this is
 NOT an applicability-notice case. State that explicitly -- "Artifact-generating but
-no deterministic verifier exists; proceeding with the rubric loop, expect Phase 2's
-artifact-cost warning to apply" -- and continue to Phase 1 normally. Do not conflate
-this case with the halt-and-ask case above; only a real deterministic verifier
-triggers the halt.
+no deterministic verifier exists; proceeding with the rubric loop, expect Phase
+1.5's cost estimate to reflect artifact-generation overhead" -- and continue to
+Phase 1 normally. Do not conflate this case with the halt-and-ask case above; only
+a real external ground truth triggers the halt, not rule density and not mere
+artifact generation.
 
 ---
 
@@ -152,7 +200,15 @@ State the test set explicitly, one line each, before running anything.
 
 ## Phase 1.5 -- Cost estimate and commitment checkpoint (mandatory, always shown, always requires explicit go-ahead)
 
-Before any rollout runs, compute and display an estimate using this structure:
+Before any rollout runs, open with 2-3 plain-English sentences: what is about to
+happen (running the test cases just listed), roughly how much work that involves,
+and why a particular option is being suggested. For example: "I'm about to run 10
+test scenarios against this skill to see where it breaks. Most are quick text
+checks, but a few actually run a browser, which takes longer and is harder to
+predict. I'd recommend the full run because [specific reason tied to this skill --
+e.g. 'several of the riskiest behaviors, like the wait-before-inspecting rule, only
+show up in the browser-based cases, so skipping them would miss the most likely
+real bugs']." Only after this plain explanation, show the technical breakdown:
 
 1. **Rollout count, worst case.** Round 1 = number of test cases from Phase 1 (N).
    Each additional round (up to 3 more) typically re-tests only the cases relevant
@@ -258,8 +314,12 @@ together, every time.
 ## Verdict
 One line, plain English first: "This skill works correctly" / "This skill had
 real problems, and they're now fixed" / "Some problems are fixed, some need
-your action" / "This isn't the right kind of test for this skill." Follow with
-the technical label in parentheses, e.g. "(FIXED)".
+your action" / "This isn't the right kind of test for this skill -- here's what
+would work better instead." Follow with the technical label in parentheses, e.g.
+"(FIXED)" or "(NOT APPLICABLE)". If NOT APPLICABLE, this section must also
+include the plain-English category of tool that would fit ("something that runs
+many test scenarios and checks pass/fail automatically") plus today's closest
+real example as a non-permanent pointer -- see Phase 0d for exact wording.
 
 ## What Was Tested
 - Where it came from: an installed copy on your computer, or a file you attached
@@ -289,7 +349,10 @@ the technical reason.
 ## Bottom Line
 2-3 plain sentences, no jargon at all: is this skill safe to use/publish as-is,
 and if not, the one thing standing in the way. This section should be fully
-understandable on its own, even if someone skipped everything above it.
+understandable on its own, even if someone skipped everything above it. If the
+verdict was NOT APPLICABLE, this section must end with the concrete next-step
+suggestion from Phase 0d (the kind of tool that fits, plus today's closest real
+pointer) rather than leaving the person with only "I couldn't test this."
 ```
 
 Keep the whole report scannable in under a minute -- headers and short tables,
